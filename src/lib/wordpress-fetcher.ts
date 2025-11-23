@@ -166,7 +166,11 @@ function convertWordPressPostToArticle(post: WordPressPost, source: string): Par
   const content = post.content?.rendered || '';
   const excerpt = stripHtml(post.excerpt?.rendered || '');
   const url = post.link || '';
+  
+  console.log(`[WordPress Fetcher] Converting post: ${title.substring(0, 50)}...`);
   const imageUrl = extractFeaturedImage(post);
+  console.log(`[WordPress Fetcher]   Final imageUrl: ${imageUrl ? imageUrl.substring(0, 80) + '...' : 'NULL'}`);
+  
   const publishedAt = post.date || post.date_gmt || new Date().toISOString();
   
   // Generate ID and slug (same format as RSS articles)
@@ -197,7 +201,7 @@ function convertWordPressPostToArticle(post: WordPressPost, source: string): Par
  */
 async function fetchFromWordPressSource(source: WordPressSource): Promise<ParsedArticle[]> {
   try {
-    const url = `${source.apiUrl}?per_page=10&_embed`; // Fetch 10 per source (more than RSS)
+    const url = `${source.apiUrl}?per_page=10&_embed=wp:featuredmedia`; // Explicitly request featured media
     
     console.log(`[WordPress Fetcher] Fetching from ${source.name}: ${url}`);
     
@@ -220,6 +224,18 @@ async function fetchFromWordPressSource(source: WordPressSource): Promise<Parsed
     }
 
     console.log(`[WordPress Fetcher] ✓ Fetched ${posts.length} posts from ${source.name}`);
+    
+    // Log embedded data status for debugging
+    posts.forEach((post, index) => {
+      const hasEmbedded = !!post._embedded;
+      const hasFeaturedMedia = post._embedded?.['wp:featuredmedia']?.[0];
+      console.log(`[WordPress Fetcher]   Post ${index + 1}: ${post.title.rendered.substring(0, 40)}...`);
+      console.log(`[WordPress Fetcher]     - _embedded exists: ${hasEmbedded}`);
+      console.log(`[WordPress Fetcher]     - featured media exists: ${!!hasFeaturedMedia}`);
+      if (hasFeaturedMedia) {
+        console.log(`[WordPress Fetcher]     - featured media URL: ${hasFeaturedMedia.source_url?.substring(0, 60) || 'none'}...`);
+      }
+    });
     
     // Convert WordPress posts to ParsedArticle format
     const articles = posts.map(post => convertWordPressPostToArticle(post, source.name));
