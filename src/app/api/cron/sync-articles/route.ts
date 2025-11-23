@@ -85,24 +85,70 @@ export async function GET(request: Request) {
     console.log(`[Cron Sync] ✅ Valid articles (Nov 20+): ${validArticles.length}`);
     console.log(`[Cron Sync] ⏭️ Too old articles: ${tooOldArticles.length}`);
 
+    // STEP 2: Check for duplicates in Sanity
+    console.log(`[Cron Sync] 🔍 Checking for duplicates in Sanity...`);
+    const existingArticles = await adminClient.fetch<
+      Array<{ slug: string; sourceUrl: string; title: string }>
+    >(
+      `*[_type == "article"]{ 
+        "slug": slug.current, 
+        sourceUrl,
+        title
+      }`
+    );
+
+    // Create Sets for fast duplicate checking
+    const existingSlugs = new Set(existingArticles.map(a => a.slug?.toLowerCase() || ''));
+    const existingUrls = new Set(existingArticles.map(a => a.sourceUrl));
+    const existingTitles = new Set(existingArticles.map(a => a.title?.toLowerCase().trim() || ''));
+    
+    console.log(`[Cron Sync] Found ${existingArticles.length} existing articles in Sanity`);
+
+    // STEP 3: Filter out duplicates
+    const newArticles: typeof validArticles = [];
+    const duplicateArticles: typeof validArticles = [];
+
+    for (const article of validArticles) {
+      const slug = slugify(article.title).toLowerCase();
+      const url = article.url;
+      const title = article.title.toLowerCase().trim();
+
+      // Check if article already exists (by slug, URL, or title)
+      const isDuplicate = 
+        existingSlugs.has(slug) || 
+        existingUrls.has(url) || 
+        existingTitles.has(title);
+
+      if (isDuplicate) {
+        duplicateArticles.push(article);
+      } else {
+        newArticles.push(article);
+      }
+    }
+
+    console.log(`[Cron Sync] 📊 After duplicate check:`);
+    console.log(`[Cron Sync]   ✅ New articles: ${newArticles.length}`);
+    console.log(`[Cron Sync]   🔄 Duplicates: ${duplicateArticles.length}`);
+
     // Log by source
     const bySource = new Map<string, number>();
-    for (const article of validArticles) {
+    for (const article of newArticles) {
       const source = article.source?.name || 'Unknown';
       bySource.set(source, (bySource.get(source) || 0) + 1);
     }
-    console.log('[Cron Sync] 📊 Valid articles by source:');
+    console.log('[Cron Sync] 📊 New articles by source:');
     for (const [source, count] of bySource) {
       console.log(`[Cron Sync]   - ${source}: ${count} articles`);
     }
 
-    if (validArticles.length === 0) {
+    if (newArticles.length === 0) {
       return NextResponse.json({
         success: true,
-        message: 'No articles to import (all too old)',
+        message: 'No new articles to import (all duplicates or too old)',
         imported: 0,
         failed: 0,
         skipped: tooOldArticles.length,
+        duplicates: duplicateArticles.length,
         timestamp: new Date().toISOString(),
       });
     }
@@ -116,7 +162,7 @@ export async function GET(request: Request) {
     };
 
     const targetImports = 1; // ONE article with full processing to avoid timeout
-    const articlesToProcess = validArticles.slice(0, Math.min(targetImports, validArticles.length));
+    const articlesToProcess = newArticles.slice(0, Math.min(targetImports, newArticles.length));
     
     console.log(`[Cron Sync] 🔄 Processing ${articlesToProcess.length} article(s)...`);
     console.log(`[Cron Sync] Mode: Full processing (Translation + AI + Images, NO scraping)`);
@@ -275,8 +321,9 @@ export async function GET(request: Request) {
       imported: results.imported,
       failed: results.failed,
       skipped: tooOldArticles.length,
+      duplicates: duplicateArticles.length,
       processed: results.imported + results.failed,
-      remaining: validArticles.length - results.imported - results.failed,
+      remaining: newArticles.length - results.imported - results.failed,
       errors: results.errors,
       timestamp: new Date().toISOString(),
     });
