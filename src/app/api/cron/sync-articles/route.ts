@@ -4,6 +4,7 @@ import { fetchWordPressArticles } from '@/lib/wordpress-fetcher';
 import { translateText } from '@/lib/translator';
 import { adminClient } from '@/sanity/lib/adminClient';
 import { slugify, normalizeGuid } from '@/lib/utils';
+import { uploadImageToSanity } from '@/lib/sanity-image-upload';
 
 function escapeHtml(str: string): string {
   return str
@@ -251,14 +252,42 @@ export async function GET(request: Request) {
         
         console.log(`[Cron Sync]   Using ${fullArticleContent ? 'SCRAPED' : 'RSS'} content (${plainText.length} chars, ${uniqueImages.length} images)`);
 
-        // STEP 3: Use original image URL directly (skip upload for speed)
+        // STEP 3: Handle main image (upload to Sanity for high-priority sources)
         const originalImageUrl = article.urlToImage || (uniqueImages.length > 0 ? uniqueImages[0] : null);
-        const imageUrl = originalImageUrl; // Use direct URL to avoid upload delay
-        const sanityImageAssetId: string | null = null;
+        let imageUrl = originalImageUrl;
+        let sanityImageAssetId: string | null = null;
+        const shouldUploadImage =
+          !!originalImageUrl &&
+          (article.source?.name === 'TESLARATI' || article.source?.name === 'Not a Tesla App');
         
         if (originalImageUrl) {
-          console.log(`[Cron Sync]   📸 Image found: ${originalImageUrl.substring(0, 80)}...`);
-          console.log(`[Cron Sync]   ⚡ Using original URL (upload will happen in enhance stage)`);
+          console.log(`[Cron Sync]   📸 Image found: ${originalImageUrl.substring(0, 120)}...`);
+          
+          if (shouldUploadImage) {
+            console.log(`[Cron Sync]   ⬆️ Uploading image to Sanity (${article.source.name})...`);
+            const uploadResult = await uploadImageToSanity(originalImageUrl);
+            if (uploadResult.sanityAssetId) {
+              sanityImageAssetId = uploadResult.sanityAssetId;
+              try {
+                const { urlFor } = await import('@/sanity/lib/image');
+                const sanityImage = {
+                  asset: {
+                    _ref: sanityImageAssetId,
+                    _type: 'reference' as const,
+                  },
+                };
+                imageUrl = urlFor(sanityImage).width(1600).height(900).url() || originalImageUrl;
+                console.log(`[Cron Sync]   ✅ Image uploaded to Sanity: ${sanityImageAssetId}`);
+              } catch (error) {
+                console.error('[Cron Sync]   ⚠️ Failed to build Sanity image URL, using fallback', error);
+                imageUrl = originalImageUrl;
+              }
+            } else {
+              console.warn('[Cron Sync]   ⚠️ Sanity upload failed, using original URL');
+            }
+          } else {
+            console.log(`[Cron Sync]   ⚡ Skipping upload for source ${article.source.name}`);
+          }
         } else {
           console.warn(`[Cron Sync]   ⚠️ No image found for article from ${article.source.name}`);
         }

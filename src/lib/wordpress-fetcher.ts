@@ -50,19 +50,9 @@ interface WordPressSource {
 // WordPress sources configuration
 const WORDPRESS_SOURCES: WordPressSource[] = [
   {
-    name: 'Electrek',
-    baseUrl: 'https://electrek.co',
-    apiUrl: 'https://electrek.co/wp-json/wp/v2/posts',
-  },
-  {
     name: 'TESLARATI',
     baseUrl: 'https://www.teslarati.com',
     apiUrl: 'https://www.teslarati.com/wp-json/wp/v2/posts',
-  },
-  {
-    name: 'Tesla North',
-    baseUrl: 'https://teslanorth.com',
-    apiUrl: 'https://teslanorth.com/wp-json/wp/v2/posts',
   },
 ];
 

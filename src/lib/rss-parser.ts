@@ -172,18 +172,6 @@ export const RSS_FEEDS: RSSFeedConfig[] = [
     // WordPress feeds don't support pagination via paged parameter - fetch single feed
     // No filtering needed - already Tesla-focused
   },
-  {
-    url: 'https://electrek.co/feed/',
-    sourceName: 'Electrek',
-    filterKeywords: ['tesla', 'model 3', 'model y', 'model s', 'model x', 'cybertruck', 'elon musk', 'supercharger', 'autopilot', 'fsd', 'full self driving'],
-    // Filter: Only articles mentioning Tesla-related keywords
-  },
-  {
-    url: 'https://cleantechnica.com/feed/',
-    sourceName: 'CleanTechnica',
-    filterKeywords: ['tesla', 'model 3', 'model y', 'model s', 'model x', 'cybertruck', 'elon musk', 'supercharger', 'autopilot', 'fsd', 'full self driving'],
-    // Filter: Only articles mentioning Tesla-related keywords
-  },
 ];
 
 /**
