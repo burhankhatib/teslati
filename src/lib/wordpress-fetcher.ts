@@ -9,6 +9,7 @@ import { slugify, generateIdFromUrl, normalizeGuid } from './utils';
 
 interface WordPressPost {
   id: number;
+  featured_media?: number;
   title: {
     rendered: string;
   };
@@ -97,10 +98,70 @@ function extractFirstImageFromContent(htmlContent: string): string | null {
   return null;
 }
 
+const featuredMediaCache = new Map<string, string>();
+
+function getMediaCacheKey(source: WordPressSource, mediaId: number) {
+  return `${source.name}-${mediaId}`;
+}
+
+async function fetchFeaturedMediaById(source: WordPressSource, mediaId: number): Promise<string | null> {
+  const cacheKey = getMediaCacheKey(source, mediaId);
+  if (featuredMediaCache.has(cacheKey)) {
+    return featuredMediaCache.get(cacheKey)!;
+  }
+
+  try {
+    const mediaEndpoint = source.apiUrl.replace(/\/posts\/?$/, '/media');
+    const mediaUrl = `${mediaEndpoint}/${mediaId}?_fields=source_url,media_details`;
+    console.log(`[WordPress Fetcher] Fetching featured media ${mediaId} from ${source.name}: ${mediaUrl}`);
+
+    const response = await fetch(mediaUrl, {
+      next: { revalidate: 0 },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; TeslaNewsBot/1.0)',
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.warn(`[WordPress Fetcher] ⚠️  Failed to fetch media ${mediaId}: HTTP ${response.status}`);
+      return null;
+    }
+
+    const mediaData: {
+      source_url?: string;
+      media_details?: {
+        sizes?: Record<string, { source_url: string }>;
+      };
+    } = await response.json();
+
+    const sizes = mediaData.media_details?.sizes || {};
+    const preferredOrder = ['large', 'medium_large', 'full'];
+
+    for (const size of preferredOrder) {
+      const sizeUrl = sizes[size]?.source_url;
+      if (sizeUrl) {
+        featuredMediaCache.set(cacheKey, sizeUrl);
+        return sizeUrl;
+      }
+    }
+
+    if (mediaData.source_url) {
+      featuredMediaCache.set(cacheKey, mediaData.source_url);
+      return mediaData.source_url;
+    }
+
+  } catch (error) {
+    console.error(`[WordPress Fetcher] Error fetching media ${mediaId}:`, error);
+  }
+
+  return null;
+}
+
 /**
  * Extract featured image URL from WordPress post
  */
-function extractFeaturedImage(post: WordPressPost): string | null {
+async function extractFeaturedImage(post: WordPressPost, source: WordPressSource): Promise<string | null> {
   try {
     // Method 1: Try embedded featured media
     if (
@@ -136,6 +197,15 @@ function extractFeaturedImage(post: WordPressPost): string | null {
       }
     }
     
+    // Method 1b: Fetch media by ID if embed missing
+    if (post.featured_media) {
+      const fetchedMedia = await fetchFeaturedMediaById(source, post.featured_media);
+      if (fetchedMedia) {
+        console.log(`[WordPress Fetcher] ✓ Using fetched media by ID ${post.featured_media}`);
+        return fetchedMedia;
+      }
+    }
+    
     // Method 2: Try to extract image from content HTML
     const contentImage = extractFirstImageFromContent(post.content?.rendered || '');
     if (contentImage) {
@@ -161,14 +231,14 @@ function extractFeaturedImage(post: WordPressPost): string | null {
 /**
  * Convert WordPress post to ParsedArticle format (same as RSS articles)
  */
-function convertWordPressPostToArticle(post: WordPressPost, source: string): ParsedArticle {
+async function convertWordPressPostToArticle(post: WordPressPost, source: WordPressSource): Promise<ParsedArticle> {
   const title = stripHtml(post.title?.rendered || 'Untitled');
   const content = post.content?.rendered || '';
   const excerpt = stripHtml(post.excerpt?.rendered || '');
   const url = post.link || '';
   
   console.log(`[WordPress Fetcher] Converting post: ${title.substring(0, 50)}...`);
-  const imageUrl = extractFeaturedImage(post);
+  const imageUrl = await extractFeaturedImage(post, source);
   console.log(`[WordPress Fetcher]   Final imageUrl: ${imageUrl ? imageUrl.substring(0, 80) + '...' : 'NULL'}`);
   
   const publishedAt = post.date || post.date_gmt || new Date().toISOString();
@@ -184,7 +254,7 @@ function convertWordPressPostToArticle(post: WordPressPost, source: string): Par
     guid,
     source: {
       id: null,
-      name: source,
+      name: source.name,
     },
     author: null,
     title,
@@ -238,7 +308,7 @@ async function fetchFromWordPressSource(source: WordPressSource): Promise<Parsed
     });
     
     // Convert WordPress posts to ParsedArticle format
-    const articles = posts.map(post => convertWordPressPostToArticle(post, source.name));
+    const articles = await Promise.all(posts.map(post => convertWordPressPostToArticle(post, source)));
     
     return articles;
   } catch (error) {
