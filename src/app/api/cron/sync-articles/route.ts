@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
 import { fetchRSSFeed, extractAllImages, extractPlainText } from '@/lib/rss-parser';
 import { fetchWordPressArticles } from '@/lib/wordpress-fetcher';
-import { translateText, generateStyledHtmlFromRSS } from '@/lib/translator';
+import { translateText } from '@/lib/translator';
 import { adminClient } from '@/sanity/lib/adminClient';
 import { slugify, normalizeGuid } from '@/lib/utils';
-import { uploadImagesToSanity, replaceImageUrlsInHtml, getSanityImageUrl } from '@/lib/sanity-image-upload';
 
 /**
  * Cron endpoint for automatic article syncing
@@ -199,40 +198,14 @@ export async function GET(request: Request) {
         
         console.log(`[Cron Sync]   Using ${fullArticleContent ? 'SCRAPED' : 'RSS'} content (${plainText.length} chars, ${uniqueImages.length} images)`);
 
-        // STEP 3: Upload main image to Sanity
+        // STEP 3: Use original image URL directly (skip upload for speed)
         const originalImageUrl = article.urlToImage || (uniqueImages.length > 0 ? uniqueImages[0] : null);
-        let imageUrl = originalImageUrl;
-        let sanityImageAssetId: string | null = null;
+        const imageUrl = originalImageUrl; // Use direct URL to avoid upload delay
+        const sanityImageAssetId: string | null = null;
         
-        if (originalImageUrl) {
-          const imageMap = await uploadImagesToSanity([originalImageUrl]);
-          const uploadedAssetId = imageMap.get(originalImageUrl);
-          if (uploadedAssetId) {
-            sanityImageAssetId = uploadedAssetId;
-            const { urlFor } = await import('@/sanity/lib/image');
-            try {
-              const sanityImage = {
-                asset: {
-                  _ref: uploadedAssetId,
-                  _type: 'reference' as const,
-                },
-              };
-              imageUrl = urlFor(sanityImage).width(1600).height(900).url() || originalImageUrl;
-            } catch {
-              imageUrl = getSanityImageUrl(uploadedAssetId);
-            }
-            console.log(`[Cron Sync]   ✓ Main image uploaded`);
-          }
-        }
+        console.log(`[Cron Sync]   ⚡ Using original image URL (skipping upload for speed)`);
 
-        // STEP 4: Upload all content images
-        let contentImageMap = new Map<string, string>();
-        if (uniqueImages.length > 0) {
-          contentImageMap = await uploadImagesToSanity(uniqueImages);
-          console.log(`[Cron Sync]   ✓ Uploaded ${contentImageMap.size} content images`);
-        }
-
-        // STEP 5: Translate to Arabic
+        // STEP 4: Translate title and description only (fast)
         console.log(`[Cron Sync]   🌐 Translating to Arabic...`);
         const titleTranslation = await translateText(article.title, 'ar', 'en');
         const titleAr = titleTranslation.success ? titleTranslation.translatedText : article.title;
@@ -240,38 +213,14 @@ export async function GET(request: Request) {
         const descTranslation = await translateText(article.description || '', 'ar', 'en');
         const descriptionAr = descTranslation.success ? descTranslation.translatedText : (article.description || '');
 
-        // STEP 6: Generate styled Arabic HTML
-        let htmlContentAr = '';
-        let contentAr = '';
-
-        if (plainText && plainText.trim().length > 0) {
-          const htmlGeneration = await generateStyledHtmlFromRSS(
-            article.title,
-            article.description || plainText.substring(0, 300),
-            plainText,
-            uniqueImages
-          );
-          
-          if (htmlGeneration.success) {
-            htmlContentAr = htmlGeneration.translatedText;
-            
-            if (contentImageMap.size > 0) {
-              htmlContentAr = await replaceImageUrlsInHtml(htmlContentAr, contentImageMap);
-            }
-            
-            contentAr = htmlContentAr.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            console.log(`[Cron Sync]   ✓ Generated Arabic HTML (${htmlContentAr.length} chars)`);
-          } else {
-            console.error(`[Cron Sync]   ✗ Failed to generate HTML - SKIPPING`);
-            results.failed++;
-            results.errors.push(`Failed to generate HTML for: ${article.title.substring(0, 50)}`);
-            continue;
-          }
-        }
-
+        // STEP 5: Use simple content (NO AI HTML generation for speed)
         const textContent = plainText || article.description || '';
+        const contentAr = descriptionAr; // Simple Arabic content
+        const htmlContentAr = ''; // Empty HTML for now (add later if needed)
+        
+        console.log(`[Cron Sync]   ⚡ Using simple content (skipping AI HTML for speed)`);
 
-        // STEP 7: Create article in Sanity
+        // STEP 6: Create article in Sanity
         const sanityArticle = {
           _type: 'article',
           title: article.title,
