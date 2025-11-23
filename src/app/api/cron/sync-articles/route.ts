@@ -210,7 +210,7 @@ export async function GET(request: Request) {
           console.warn(`[Cron Sync]   ⚠️ No image found for article from ${article.source.name}`);
         }
 
-        // STEP 4: Translate title and description only (fast)
+        // STEP 4: Translate title and description
         console.log(`[Cron Sync]   🌐 Translating to Arabic...`);
         const titleTranslation = await translateText(article.title, 'ar', 'en');
         const titleAr = titleTranslation.success ? titleTranslation.translatedText : article.title;
@@ -218,12 +218,25 @@ export async function GET(request: Request) {
         const descTranslation = await translateText(article.description || '', 'ar', 'en');
         const descriptionAr = descTranslation.success ? descTranslation.translatedText : (article.description || '');
 
-        // STEP 5: Use simple content (NO AI HTML generation for speed)
+        // STEP 5: Generate HTML content (with AI translation)
+        console.log(`[Cron Sync]   🎨 Generating HTML content...`);
+        const { generateStyledHtmlFromRSS } = await import('@/lib/translator');
         const textContent = plainText || article.description || '';
-        const contentAr = descriptionAr; // Simple Arabic content
-        const htmlContentAr = ''; // Empty HTML for now (add later if needed)
+        const contentAr = descriptionAr;
         
-        console.log(`[Cron Sync]   ⚡ Using simple content (skipping AI HTML for speed)`);
+        // Generate AI HTML (this is optimized and should be fast)
+        const htmlGeneration = await generateStyledHtmlFromRSS(
+          article.title,
+          article.description || '',
+          textContent,
+          uniqueImages.slice(0, 3) // Limit to first 3 images for speed
+        );
+        
+        const htmlContentAr = htmlGeneration.success 
+          ? htmlGeneration.translatedText 
+          : `<div dir="rtl" class="article-content">${contentAr}</div>`;
+        
+        console.log(`[Cron Sync]   ✓ HTML generated (${htmlContentAr.length} chars)`);
 
         // STEP 6: Create article in Sanity
         const sanityArticle = {
