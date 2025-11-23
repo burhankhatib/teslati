@@ -5,6 +5,59 @@ import { translateText } from '@/lib/translator';
 import { adminClient } from '@/sanity/lib/adminClient';
 import { slugify, normalizeGuid } from '@/lib/utils';
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function splitIntoParagraphs(text: string): string[] {
+  return text
+    .split(/\n{2,}/)
+    .map(paragraph => paragraph.trim())
+    .filter(paragraph => paragraph.length > 0);
+}
+
+function generateBasicHtml(options: {
+  title: string;
+  content: string;
+  images: string[];
+  lang: 'en' | 'ar';
+}): string {
+  const { title, content, images, lang } = options;
+  const paragraphs = splitIntoParagraphs(content);
+  const dir = lang === 'ar' ? 'rtl' : 'ltr';
+  const languageAttr = lang === 'ar' ? 'ar' : 'en';
+  const escapedTitle = escapeHtml(title);
+
+  const paragraphHtml =
+    paragraphs.length > 0
+      ? paragraphs
+          .map(paragraph => `<p class="leading-relaxed mb-4">${escapeHtml(paragraph)}</p>`)
+          .join('\n')
+      : `<p class="leading-relaxed mb-4">${escapeHtml(content)}</p>`;
+
+  const imageSection =
+    images && images.length > 0
+      ? `<figure class="my-6">
+  <img src="${images[0]}" alt="${escapedTitle}" class="w-full rounded-xl shadow-md object-cover" loading="lazy" />
+</figure>`
+      : '';
+
+  return `<article dir="${dir}" lang="${languageAttr}" class="prose prose-neutral max-w-none text-base sm:text-lg">
+  <header class="mb-6">
+    <h1 class="text-3xl sm:text-4xl font-bold mb-4">${escapedTitle}</h1>
+  </header>
+  ${imageSection}
+  <section class="space-y-4">
+    ${paragraphHtml}
+  </section>
+</article>`;
+}
+
 /**
  * Cron endpoint for automatic article syncing
  * 
@@ -211,32 +264,31 @@ export async function GET(request: Request) {
         }
 
         // STEP 4: Translate title and description
-        console.log(`[Cron Sync]   🌐 Translating to Arabic...`);
-        const titleTranslation = await translateText(article.title, 'ar', 'en');
+        console.log(`[Cron Sync]   🌐 Translating to Arabic (parallel)...`);
+        const [titleTranslation, descTranslation] = await Promise.all([
+          translateText(article.title, 'ar', 'en'),
+          translateText(article.description || '', 'ar', 'en'),
+        ]);
         const titleAr = titleTranslation.success ? titleTranslation.translatedText : article.title;
-
-        const descTranslation = await translateText(article.description || '', 'ar', 'en');
         const descriptionAr = descTranslation.success ? descTranslation.translatedText : (article.description || '');
 
-        // STEP 5: Generate HTML content (with AI translation)
-        console.log(`[Cron Sync]   🎨 Generating HTML content...`);
-        const { generateStyledHtmlFromRSS } = await import('@/lib/translator');
+        // STEP 5: Generate lightweight HTML content
+        console.log(`[Cron Sync]   🎨 Generating lightweight HTML content...`);
         const textContent = plainText || article.description || '';
-        const contentAr = descriptionAr;
-        
-        // Generate AI HTML (this is optimized and should be fast)
-        const htmlGeneration = await generateStyledHtmlFromRSS(
-          article.title,
-          article.description || '',
-          textContent,
-          uniqueImages.slice(0, 3) // Limit to first 3 images for speed
-        );
-        
-        const htmlContentAr = htmlGeneration.success 
-          ? htmlGeneration.translatedText 
-          : `<div dir="rtl" class="article-content">${contentAr}</div>`;
-        
-        console.log(`[Cron Sync]   ✓ HTML generated (${htmlContentAr.length} chars)`);
+        const contentAr = descriptionAr || article.description || '';
+        const htmlContent = generateBasicHtml({
+          title: article.title,
+          content: textContent,
+          images: uniqueImages.slice(0, 3),
+          lang: 'en',
+        });
+        const htmlContentAr = generateBasicHtml({
+          title: titleAr,
+          content: contentAr,
+          images: uniqueImages.slice(0, 3),
+          lang: 'ar',
+        });
+        console.log(`[Cron Sync]   ✓ HTML generated (EN ${htmlContent.length} chars | AR ${htmlContentAr.length} chars)`);
 
         // STEP 6: Create article in Sanity
         const sanityArticle = {
@@ -251,7 +303,7 @@ export async function GET(request: Request) {
           descriptionAr: descriptionAr,
           content: textContent,
           contentAr: contentAr || descriptionAr,
-          htmlContent: '',
+          htmlContent,
           htmlContentAr: htmlContentAr || contentAr,
           imageUrl: imageUrl,
           image: sanityImageAssetId ? {
