@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchRSSFeed, extractAllImages, extractPlainText } from '@/lib/rss-parser';
 import { fetchWordPressArticles } from '@/lib/wordpress-fetcher';
-import { scrapeArticleContent } from '@/lib/article-scraper';
 import { translateText, generateStyledHtmlFromRSS } from '@/lib/translator';
 import { adminClient } from '@/sanity/lib/adminClient';
 import { slugify, normalizeGuid } from '@/lib/utils';
@@ -108,7 +107,7 @@ export async function GET(request: Request) {
       });
     }
 
-    // Process articles - import up to 20 at a time
+    // Process articles - import up to 3 at a time (to avoid timeout)
     const results = {
       imported: 0,
       failed: 0,
@@ -116,7 +115,7 @@ export async function GET(request: Request) {
       errors: [] as string[],
     };
 
-    const targetImports = 20;
+    const targetImports = 3; // Reduced from 20 to 3 to avoid timeout
     const articlesToProcess = validArticles.slice(0, Math.min(targetImports, validArticles.length));
     
     console.log(`[Cron Sync] 🔄 Processing ${articlesToProcess.length} articles...`);
@@ -130,22 +129,14 @@ export async function GET(request: Request) {
         // Generate slug
         const slug = slugify(article.title);
 
-        // STEP 1: Scrape full article content
-        let fullArticleContent = '';
-        let fullArticleHtml = '';
-        let scrapedImages: string[] = [];
+        // STEP 1: Skip scraping for speed (use RSS content only)
+        // Scraping adds 10-30 seconds per article, causing timeout
+        const fullArticleContent = article.content || article.description || '';
+        const fullArticleHtml = article.content || article.description || '';
+        const scrapedImages: string[] = [];
         
-        try {
-          const scraped = await scrapeArticleContent(article.url);
-          if (scraped.success && scraped.content) {
-            fullArticleContent = scraped.content;
-            fullArticleHtml = scraped.htmlContent || '';
-            scrapedImages = extractAllImages(fullArticleHtml || fullArticleContent, article.url);
-            console.log(`[Cron Sync]   ✓ Scraped content (${fullArticleContent.length} chars, ${scrapedImages.length} images)`);
-          }
-        } catch (scrapeError) {
-          console.error(`[Cron Sync]   ⚠️ Scraping failed:`, scrapeError);
-        }
+        // Skip scraping to avoid timeout - use RSS content directly
+        console.log(`[Cron Sync]   ⚡ Using RSS content (skipping scraping for speed)`);
 
         // STEP 2: Use scraped content or fall back to RSS
         const rssContent = article.content || article.description || '';
@@ -264,8 +255,8 @@ export async function GET(request: Request) {
         results.imported++;
         console.log(`[Cron Sync]   ✅ Imported (${results.imported}/${targetImports}): ${titleAr.substring(0, 50)}...`);
         
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Small delay to avoid rate limiting (reduced from 1000ms to 500ms)
+        await new Promise(resolve => setTimeout(resolve, 500));
         
       } catch (error) {
         console.error(`[Cron Sync]   ✗ Failed to import:`, error);
