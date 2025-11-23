@@ -203,7 +203,12 @@ export async function GET(request: Request) {
         const imageUrl = originalImageUrl; // Use direct URL to avoid upload delay
         const sanityImageAssetId: string | null = null;
         
-        console.log(`[Cron Sync]   ⚡ Using original image URL (skipping upload for speed)`);
+        if (originalImageUrl) {
+          console.log(`[Cron Sync]   📸 Image found: ${originalImageUrl.substring(0, 80)}...`);
+          console.log(`[Cron Sync]   ⚡ Using original URL (upload will happen in enhance stage)`);
+        } else {
+          console.warn(`[Cron Sync]   ⚠️ No image found for article from ${article.source.name}`);
+        }
 
         // STEP 4: Translate title and description only (fast)
         console.log(`[Cron Sync]   🌐 Translating to Arabic...`);

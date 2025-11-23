@@ -73,13 +73,23 @@ export async function GET(request: Request) {
     // Upload main image if needed
     let sanityImageAssetId: string | null = null;
     if (article.imageUrl && !article.imageUrl.includes('cdn.sanity.io')) {
-      console.log(`[Enhance] Uploading main image...`);
-      const imageMap = await uploadImagesToSanity([article.imageUrl]);
-      const uploadedAssetId = imageMap.get(article.imageUrl);
-      if (uploadedAssetId) {
-        sanityImageAssetId = uploadedAssetId;
-        console.log(`[Enhance] ✓ Main image uploaded`);
+      console.log(`[Enhance] Uploading main image from: ${article.imageUrl.substring(0, 100)}...`);
+      try {
+        const imageMap = await uploadImagesToSanity([article.imageUrl]);
+        const uploadedAssetId = imageMap.get(article.imageUrl);
+        if (uploadedAssetId) {
+          sanityImageAssetId = uploadedAssetId;
+          console.log(`[Enhance] ✓ Main image uploaded to Sanity: ${uploadedAssetId}`);
+        } else {
+          console.warn(`[Enhance] ⚠️ Failed to upload main image (no asset ID returned)`);
+        }
+      } catch (error) {
+        console.error(`[Enhance] ✗ Error uploading main image:`, error);
       }
+    } else if (!article.imageUrl) {
+      console.warn(`[Enhance] ⚠️ No image URL found for article`);
+    } else {
+      console.log(`[Enhance] ℹ️ Image already in Sanity CDN`);
     }
 
     // Upload all content images
