@@ -107,7 +107,7 @@ export async function GET(request: Request) {
       });
     }
 
-    // Process articles - import up to 3 at a time (to avoid timeout)
+    // Process articles - import ONLY 1 article per run (with full AI translation + images)
     const results = {
       imported: 0,
       failed: 0,
@@ -115,16 +115,20 @@ export async function GET(request: Request) {
       errors: [] as string[],
     };
 
-    const targetImports = 3; // Reduced from 20 to 3 to avoid timeout
+    const targetImports = 1; // ONE article with full processing to avoid timeout
     const articlesToProcess = validArticles.slice(0, Math.min(targetImports, validArticles.length));
     
-    console.log(`[Cron Sync] 🔄 Processing ${articlesToProcess.length} articles...`);
+    console.log(`[Cron Sync] 🔄 Processing ${articlesToProcess.length} article(s)...`);
+    console.log(`[Cron Sync] Mode: Full processing (Translation + AI + Images, NO scraping)`);
 
     for (let i = 0; i < articlesToProcess.length; i++) {
       const article = articlesToProcess[i];
+      const startTime = Date.now();
       
       try {
         console.log(`[Cron Sync] [${i + 1}/${articlesToProcess.length}] Processing: ${article.title.substring(0, 50)}...`);
+        console.log(`[Cron Sync]   Source: ${article.source.name}`);
+        console.log(`[Cron Sync]   Published: ${article.publishedAt}`);
 
         // Generate slug
         const slug = slugify(article.title);
@@ -253,10 +257,8 @@ export async function GET(request: Request) {
 
         await adminClient.create(sanityArticle);
         results.imported++;
-        console.log(`[Cron Sync]   ✅ Imported (${results.imported}/${targetImports}): ${titleAr.substring(0, 50)}...`);
-        
-        // Small delay to avoid rate limiting (reduced from 1000ms to 500ms)
-        await new Promise(resolve => setTimeout(resolve, 500));
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`[Cron Sync]   ✅ Imported in ${elapsed}s (${results.imported}/${targetImports}): ${titleAr.substring(0, 50)}...`);
         
       } catch (error) {
         console.error(`[Cron Sync]   ✗ Failed to import:`, error);
